@@ -1,0 +1,43 @@
+name: Aggiorna Circolari Belvedere
+
+on:
+  schedule:
+    # 07:30, 12:30, 16:30 ora solare italiana (UTC 06:30, 11:30, 15:30) lun-sab
+    - cron: '30 6,11,15 * * 1-6'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Tesseract OCR (ita) & Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ita
+          pip install --no-cache-dir requests beautifulsoup4 pymupdf pytesseract Pillow
+
+      - name: Check & parse new circulars
+        run: python cloud_update.py
+
+      - name: Commit and push updates if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data.json index.html
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: aggiornamento automatico circolari Belvedere"
+            git push
+          else
+            echo "Nessuna nuova circolare da pubblicare."
+          fi
