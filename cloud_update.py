@@ -109,21 +109,43 @@ def extract_pdf_or_img_bytes(data: bytes, filename: str) -> tuple[str, list[str]
 
 
 def infer_event_date(text: str, fallback_iso: str) -> str:
-    m_num = re.search(r"(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2})", text)
-    if m_num:
-        d, mo, y = int(m_num.group(1)), int(m_num.group(2)), int(m_num.group(3))
-        if 1 <= mo <= 12 and 1 <= d <= 31:
-            return f"{y:04d}-{mo:02d}-{d:02d}"
+    # Cerca prima nella frase operativa ("si comunica che ...") evitando date di protocollo/ordinanza
+    low = text.lower()
+    idx_com = low.find("si comunica")
+    search_zone = text[idx_com:idx_com + 350] if idx_com != -1 else text
+
     m_txt = re.search(
-        r"(\d{1,2})\s+(gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)(?:\s+(20\d{2}))?",
-        text.lower(),
+        r"(\d{1,2})\s+(gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)(?:\s+(202[5-9]))?",
+        search_zone.lower(),
     )
     if m_txt:
         d = int(m_txt.group(1))
         mo = MONTHS_FULL_IT[m_txt.group(2)]
         y = m_txt.group(3) or fallback_iso[:4]
         return f"{y}-{mo}-{d:02d}"
+
+    m_num = re.search(r"(\d{1,2})[/.-](\d{1,2})[/.-](202[5-9])", search_zone)
+    if m_num:
+        d, mo, y = int(m_num.group(1)), int(m_num.group(2)), int(m_num.group(3))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            return f"{y:04d}-{mo:02d}-{d:02d}"
     return fallback_iso
+
+
+def infer_belvedere_scope(title: str, text: str, all_units: list[str]) -> list[str]:
+    prim_units = [u for u in all_units if "^" in u]
+    inf_units = [u for u in all_units if u.startswith("Sez.")]
+    low = text.lower()
+    idx_com = low.find("si comunica")
+    zone = (title + " " + (low[idx_com:idx_com + 300] if idx_com != -1 else low[:400])).lower()
+
+    has_prim = "belvedere primaria" in zone or ("belvedere" in zone and "primaria" in zone and "belvedere infanzia" not in zone)
+    has_inf = "belvedere infanzia" in zone
+    if has_prim and not has_inf:
+        return prim_units
+    if has_inf and not has_prim:
+        return inf_units
+    return list(all_units)
 
 
 def detect_calendar_events(art: dict[str, Any], all_units: list[str]) -> list[dict[str, Any]]:
@@ -131,8 +153,9 @@ def detect_calendar_events(art: dict[str, Any], all_units: list[str]) -> list[di
     text = art["excerpt"]
     low = f"{title}\n{text}".lower()
     new_events: list[dict[str, Any]] = []
-    ev_date = infer_event_date(title + " " + text[:600], art["date"])
+    ev_date = infer_event_date(title + "\n" + text, art["date"])
     sy = "2026-2027" if ev_date >= "2026-07-01" else "2025-2026"
+    scope = infer_belvedere_scope(title, text, all_units)
 
     if "sciopero" in title.lower():
         new_events.append(
@@ -171,7 +194,7 @@ def detect_calendar_events(art: dict[str, Any], all_units: list[str]) -> list[di
                     "date": ev_date,
                     "category": "assemblea",
                     "title": title[:95],
-                    "scope_units": list(all_units),
+                    "scope_units": scope,
                     "morning_lost_min": lost_min,
                     "afternoon_lost_min": 0,
                     "full_day_lost": False,
@@ -184,7 +207,60 @@ def detect_calendar_events(art: dict[str, Any], all_units: list[str]) -> list[di
                     "exit_time": "",
                     "circ_ref": f"art. {art['art_id']} ({art['date']})",
                     "circ_file": art["attachments"][0]["url"] if art["attachments"] else art["url"],
-                    "notes": "Rilevato automaticamente da nuova circolare: verifica se tutte le classi di Belvedere sono coinvolte.",
+                    "notes": "Rilevato automaticamente da nuova circolare: verifica eventuali esclusioni di singole classi.",
+                }
+            )
+    elif any(k in title.lower() for k in ["sospensione", "chiusura"]) and ("belvedere" in low or "tutte le scuole" in low or "tutto il" in low):
+        if "posticip" in low or re.search(r"inizieranno alle ore|entreranno alle ore", low):
+            m_entry = re.search(r"ore\s+(\d{1,2})[:.](\d{2})", low)
+            entry_str = f"{int(m_entry.group(1)):02d}:{m_entry.group(2)}" if m_entry else "09:30"
+            eh, em = map(int, entry_str.split(":"))
+            lost_min = max(0, (eh * 60 + em) - 480)
+            new_events.append(
+                {
+                    "id": f"auto_ext_{art['art_id']}",
+                    "school_year": sy,
+                    "date": ev_date,
+                    "category": "chiusura_straord",
+                    "title": title[:95],
+                    "scope_units": scope,
+                    "morning_lost_min": lost_min,
+                    "afternoon_lost_min": 0,
+                    "full_day_lost": False,
+                    "is_bridge": False,
+                    "is_strike_notice": False,
+                    "strike_default_active": False,
+                    "union": "",
+                    "assembly_time": "",
+                    "entry_time": entry_str,
+                    "exit_time": "",
+                    "circ_ref": f"art. {art['art_id']} ({art['date']})",
+                    "circ_file": art["attachments"][0]["url"] if art["attachments"] else art["url"],
+                    "notes": "Ingresso posticipato straordinario rilevato automaticamente via OCR.",
+                }
+            )
+        else:
+            new_events.append(
+                {
+                    "id": f"auto_ext_{art['art_id']}",
+                    "school_year": sy,
+                    "date": ev_date,
+                    "category": "chiusura_straord",
+                    "title": title[:95],
+                    "scope_units": scope,
+                    "morning_lost_min": 0,
+                    "afternoon_lost_min": 0,
+                    "full_day_lost": True,
+                    "is_bridge": False,
+                    "is_strike_notice": False,
+                    "strike_default_active": False,
+                    "union": "",
+                    "assembly_time": "",
+                    "entry_time": "",
+                    "exit_time": "",
+                    "circ_ref": f"art. {art['art_id']} ({art['date']})",
+                    "circ_file": art["attachments"][0]["url"] if art["attachments"] else art["url"],
+                    "notes": "Sospensione attività didattiche rilevata automaticamente da nuova circolare (OCR).",
                 }
             )
     return new_events

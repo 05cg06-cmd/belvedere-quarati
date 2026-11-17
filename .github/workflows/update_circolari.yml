@@ -2,8 +2,8 @@ name: Aggiorna Circolari Belvedere
 
 on:
   schedule:
-    # 07:30, 12:30, 16:30 ora solare italiana (UTC 06:30, 11:30, 15:30) lun-sab
-    - cron: '30 6,11,15 * * 1-6'
+    # Ogni 30 minuti tra le 07:00 e le 20:30 ora italiana (UTC 06:00-19:30) lun-sab
+    - cron: '*/30 6-19 * * 1-6'
   workflow_dispatch:
 
 permissions:
