@@ -2,8 +2,8 @@ name: Aggiorna Circolari Belvedere
 
 on:
   schedule:
-    # 4 controlli al giorno tra le 8 e le 18 lun-sab (08:00/11:00/14:00/17:00 CET; 09:00/12:00/15:00/18:00 CEST)
-    - cron: '0 7,10,13,16 * * 1-6'
+    # Controlli ogni 2 ore dalle 08:00 alle 21:00 lun-sab (inclusa fascia serale per ordinanze meteo)
+    - cron: '0 7,9,11,13,15,17,19,20 * * 1-6'
   workflow_dispatch:
 
 permissions:

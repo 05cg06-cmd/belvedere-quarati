@@ -109,10 +109,14 @@ def extract_pdf_or_img_bytes(data: bytes, filename: str) -> tuple[str, list[str]
 
 
 def infer_event_date(text: str, fallback_iso: str) -> str:
-    # Cerca prima nella frase operativa ("si comunica che ...") evitando date di protocollo/ordinanza
+    # Cerca prima nella frase operativa ("si comunica che ...", "per la giornata di ...", "ordina")
     low = text.lower()
-    idx_com = low.find("si comunica")
-    search_zone = text[idx_com:idx_com + 350] if idx_com != -1 else text
+    search_zone = text
+    for marker in ("per la giornata di", "si comunica", "ordina"):
+        idx = low.find(marker)
+        if idx != -1:
+            search_zone = text[idx:idx + 400]
+            break
 
     m_txt = re.search(
         r"(\d{1,2})\s+(gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)(?:\s+(202[5-9]))?",
@@ -210,7 +214,13 @@ def detect_calendar_events(art: dict[str, Any], all_units: list[str]) -> list[di
                     "notes": "Rilevato automaticamente da nuova circolare: verifica eventuali esclusioni di singole classi.",
                 }
             )
-    elif any(k in title.lower() for k in ["sospensione", "chiusura"]) and ("belvedere" in low or "tutte le scuole" in low or "tutto il" in low):
+    elif any(k in title.lower() for k in ["sospensione", "chiusura", "ordinanza"]) and (
+        "belvedere" in low
+        or "tutte le scuole" in low
+        or "scuole di ogni ordine e grado" in low
+        or "territorio cittadino" in low
+        or "tutto il" in low
+    ):
         if "posticip" in low or re.search(r"inizieranno alle ore|entreranno alle ore", low):
             m_entry = re.search(r"ore\s+(\d{1,2})[:.](\d{2})", low)
             entry_str = f"{int(m_entry.group(1)):02d}:{m_entry.group(2)}" if m_entry else "09:30"
